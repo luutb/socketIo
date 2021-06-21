@@ -1,0 +1,271 @@
+<html>
+
+<head>
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+    <script>
+        var socket = io("http://localhost:8000");
+    </script>
+
+
+</head>
+
+<body>
+
+    <div id="login-panel">
+        <h1>Login</h1>
+        <div>
+            <input id="user-name" type="text" placeholder="name"/>
+            <button onclick="login()">
+                Login
+            </button>
+        </div>
+    </div>
+    <style>
+        #panel-friend{
+            position: fixed;
+            top:0px;
+            right: 5px;
+            min-width: 200px;
+            height: 100%;
+            box-shadow: 1px 1px 10px black;
+        }
+        .item-friend{
+            min-height: 40px;
+            border-bottom: 1px solid gray;
+            padding:10px;
+            cursor: pointer;
+        }
+        .item-friend:hover{
+            background-color: black;
+            color:white
+        }
+        #chat-content{
+            min-height: 200px;
+            width:300px;
+            border: 1px solid black;
+        }
+        .chat-item{
+            position: relative;
+            padding:10px;
+            border-radius: 5px;
+            box-shadow: 0px 0px 2px gray;
+            margin: 5px;
+        }
+        .owner-message{
+            text-align: right;
+            background-color: cornflowerblue;
+           
+        }
+        .friend-message{
+            text-align: left;
+            background-color: cornsilk;
+            border-radius: 5px;
+          
+        }
+        .noti-item{
+            position: fixed;
+            bottom:0px;
+            left:0px;
+            width: 100%;
+            text-align: center;
+            min-height: 40px;
+            line-height: 40px;
+            background-color: black;
+            color:white;
+        }
+
+    </style>
+    <div id="chat-panel" style="display: none;">
+        <h1 id="chat-title">Chat</h1>
+        <div id="panel-friend">
+
+        </div>
+        <div id= "chat-content">
+            
+        </div>
+        <textarea id="input-chat"></textarea>
+        <button onclick="send()">Send</button>
+    </div>
+
+
+
+    <script>
+        var myData = null;
+        var listFriend = {}
+        var currentUserId = null;
+        var currentInbox = null
+        let MessageType = {
+                            sendText:  0x0000001,
+                            sendImage: 0x0000010,
+                            createConversation: 0x0000100,
+                            deleteConversation: 0x0001000,
+                            checkConversation:0x0010000,
+                            getListFriend:0x0100000,
+                            getConversationMessage:0x1000000
+                        };
+        socket.on('connect', () => {
+
+            socket.on('MESSAGE', (msg) => {
+                // sự kiện login
+                if (msg.type== 0){ 
+
+                    if (!msg.error)
+                        loginSuccess(msg)
+                    else
+                        alert("Error!")
+                }
+                // sự kiện sau login
+                else{
+
+                    //response lấy danh sách friend
+                    if (msg.msgType == MessageType.getListFriend){
+                        displayListFriend(msg.data);
+                        for (var k of msg.data){
+                            listFriend[k.id] = k.name;
+                        }
+                    }
+                    //response kiểm tra conversation
+                    else  if (msg.msgType == MessageType.checkConversation){
+                        
+                        if (!msg.error){
+                            // conversation đã được tạo;
+                            currentInbox = msg.data;
+                            // lấy nội dung tin nhắn cũ 
+                            socket.emit("MESSAGE", {
+                                type:MessageType.getConversationMessage,
+                                conversation:currentInbox.id
+                            });
+                            return;
+                        }
+                        // xử lý tạo conversation 
+                        socket.emit("MESSAGE",{
+                            type:MessageType.createConversation,
+                            friend:currentUserId,
+                            conversationType:0
+                        });
+                        
+                    } 
+                     // response tạo cuộc trò chuyện
+                    else  if (msg.msgType == MessageType.createConversation){
+                       
+                        currentInbox = msg.data;
+                        
+                    }
+                    // nhận được tin nhắn
+                    else if (msg.msgType & (MessageType.sendText|MessageType.sendImage)){
+                            let data = msg.data; 
+                            analysMessage(data);
+
+                    }
+                    else if (msg.msgType == MessageType.getConversationMessage){
+                        displayListMessage(msg.data);
+                    }
+                    
+                }
+            });
+
+            console.log("connected");
+        });
+
+        function login(){
+           userName =  $("#user-name").val();
+           var loginMessage = {
+               name:userName
+           }
+           socket.emit("login",loginMessage);
+        }
+
+        function loginSuccess(data){
+            myData = data.data;
+            console.log(data);
+            $("#login-panel").css({display:"none"});
+            $("#chat-panel").css({display:"block"});
+            socket.emit("MESSAGE",{
+                type:MessageType.getListFriend
+            });
+            
+            
+        }
+        function send(){
+            let chat = $("textarea").val();
+            if (currentInbox == null){
+                alert("Chưa chọn bạn chat cùng");
+                return;
+            }
+
+            socket.emit("MESSAGE",{
+                type:MessageType.sendText,
+                payload:chat,
+                conversation:currentInbox.id
+            })
+            
+        }
+        function displayListFriend(data){
+            $("#panel-friend").html("");
+            for (var k of data){
+                $("#panel-friend").append(`
+                    <div class="item-friend" data-id="${k.id}">
+                    ${k.name}
+                    </div>
+                `)
+            }
+            $(".item-friend").click(function(){
+                onActiveInbox($(this).attr("data-id"));
+            });
+        }
+
+        function onActiveInbox(inboxId){
+            if (currentInbox !=null && currentInbox.id == inboxId)
+            {
+                return;
+            }
+
+            $("#chat-content").html("");
+
+                $("#chat-title").html("Chat with "+listFriend[inboxId]);
+                currentUserId = inboxId;
+                socket.emit("MESSAGE", {
+                    type:MessageType.checkConversation,
+                    friend:inboxId
+                });
+        }
+        function analysMessage(message){
+            if ( currentInbox != null && message.conversationId == currentInbox.id){
+                appendNewMessage(message);
+            }else{
+                notificateMessage(message)
+            }
+        }
+        function notificateMessage(message){
+            
+            var notiId = $("<div class='noti-item'> "+ "bạn nhận được một tin nhắn mới từ " + listFriend[message.owner]+"</div> ");
+            $("body").append(notiId);
+            setTimeout(function(){
+                notiId.remove()
+            },2000)
+        }
+        function displayListMessage(messages){
+            for (var k of messages){
+                appendNewMessage(k);
+            }
+        }
+        function appendNewMessage(message){
+            let classStyle="owner-message";
+            console.log(myData,message);
+            if ( message.owner != myData.id)
+            {
+                classStyle = "friend-message"
+            }
+            $("#chat-content").append(`
+            <div class="chat-item ${classStyle}" onClick="alert('${message.created}')">
+            ${message.payload}
+            </div>
+            `)
+        }
+
+    </script>
+
+</body>
+
+</html>
